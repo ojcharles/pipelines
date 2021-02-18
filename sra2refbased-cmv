@@ -1,0 +1,147 @@
+# HCMV reference based assembly pipeline
+# Used to process ancient DNA SRA entries 
+# v1 simple trim and bbmap - next rem human? decrease quality?
+# OC 2021
+
+#refs
+# sra toolkit now supported here https://github.com/ncbi/sra-tools/wiki/03.-Quick-Toolkit-Configuration
+
+### pipeline variables
+outdir=/cluster/scratch8b/oscar/2101_cmvsra # no /
+ref_seq=/SAN/breuerlab/pathseq1/oc/cmvref/NC_006273.2.fasta # merlin
+sra_list=${outdir}/sraList.tab # file with per line accession numbers
+###
+
+## hardcoded software
+sratoolkit=/SAN/breuerlab/pathseq1/oc/tools/sratoolkit.2.10.9-ubuntu64
+
+
+
+### begin
+
+for sample in `cat $sra_list`; do
+    echo $sample
+
+### end variables
+mkdir ${outdir}/${sample}/
+mkdir ${outdir}/${sample}/QC
+mkdir ${outdir}/${sample}/refbased
+mkdir ${outdir}/${sample}/cluster
+mkdir ${outdir}/${sample}/cluster/out
+mkdir ${outdir}/${sample}/cluster/error
+
+
+
+
+#---------------------------- handle SRA -> fastq_1/_2 if not exist
+cp -R ${sratoolkit}/.ncbi ~ # copy the SRA config to wherever this is running
+if [ -e ${sample}_1.fastq ]
+then
+    echo "files exist ignoring sratoolkit"
+else
+    echo "files not exist downloading"
+    ### sratoolkit download the sra accession from ncbi
+    #get sra record from NCBI, write to folder of sra code
+    ${sratoolkit}/bin/prefetch ${sample} -O ${outdir} --max-size 20g -p -f yes
+    # convert sra bin fo fastq
+    ${sratoolkit}/bin/fastq-dump ${sample} --split-files --skip-technical
+    # remove .sra file
+    # convert fastq to fasta for blast
+    #paste - - - - < *_1.fastq | cut -f 1,2 | sed 's/^@/>/' | tr "\t" "\n" > 1.fa
+fi
+
+
+
+	
+echo "
+#!/bin/bash -l
+#$ -S /bin/bash
+#$ -o ${outdir}/${sample}/cluster/out 
+#$ -e ${outdir}/${sample}/cluster/error
+#$ -l h_rt=06:00:00
+#$ -l tmem=12.9G,h_vmem=12.9G
+#$ -N  CMV_${sample}
+#$ -wd  ${outdir}/${sample}
+#$ -V
+#$ -R y
+
+#---------------------------- activate conda env
+source /share/apps/anaconda/bin/activate /home/ocharles/.conda/envs/CMV_refbased
+
+#---------------------------- fastq -> QC -> BAM handle split or single reads
+if [ -e ${sample}_2.fastq ] # if split else condier alone only
+then
+    echo "Split read files"
+    #---------------------------- QC
+    trim_galore -q 20 --paired ${outdir}/${sample}/${sample}*_1.fastq ${outdir}/${sample}/${sample}*_2.fastq  -o ${outdir}/${sample}/QC
+    qc_file1=\`find  ${outdir}/${sample}/QC/  -type f -name \"${sample}*_1.fastq\"\`
+    qc_file2=\`find  ${outdir}/${sample}/QC/  -type f -name \"${sample}*_2.fastq\"\` 
+
+    #---------------------------- mapping
+    ###### map -> bam
+    bbmap.sh -Xmx8g in1=${qc_file1} in2=${qc_file2} minid=0.8 covstats=${outdir}/${sample}/refbased/${sample}.constats.txt out=${outdir}/${sample}/refbased/${sample}.sam ref=${ref_seq}  nodisk
+
+else
+    echo "single read file"
+    #---------------------------- QC
+    trim_galore -q 20 ${outdir}/${sample}/${sample}*_1.fastq -o ${outdir}/${sample}/QC
+    qc_file1=\`find  ${outdir}/${sample}/QC/  -type f -name \"${sample}*_1.fastq\"\`
+    #---------------------------- mapping
+    ###### map -> bam
+    bbmap.sh -Xmx8g in=${qc_file1} minid=0.8 covstats=${outdir}/${sample}/refbased/${sample}.constats.txt out=${outdir}/${sample}/refbased/${sample}.sam ref=${ref_seq}  nodisk
+fi
+
+
+
+
+
+
+#---------------------------- assembly
+###### sam -> bam       
+samtools view -bS  -o ${outdir}/${sample}/refbased/${sample}.bam ${outdir}/${sample}/refbased/${sample}.sam  
+
+
+###### bam -> bam_sort
+samtools sort -m 1000000000 ${outdir}/${sample}/refbased/${sample}.bam -o ${outdir}/${sample}/refbased/${sample}_sorted.bam                                                                                                  
+
+###### bam_sort index
+samtools index  ${outdir}/${sample}/refbased/${sample}_sorted.bam         
+
+
+###### remove duplicates
+picard MarkDuplicates INPUT=${outdir}/${sample}/refbased/${sample}_sorted.bam  OUTPUT=${outdir}/${sample}/refbased/${sample}_accepted_hits.nodups.bam METRICS_FILE=${outdir}/${sample}/refbased/dupsv.txt REMOVE_DUPLICATES=TRUE AS=true VALIDATION_STRINGENCY=LENIENT
+
+
+#######sort and index again the non-dup 
+###### sort
+    samtools sort -m 1000000000 ${outdir}/${sample}/refbased/${sample}_accepted_hits.nodups.bam -o ${outdir}/${sample}/refbased/${sample}_nodups_sorted.bam
+###### index
+samtools index  ${outdir}/${sample}/refbased/${sample}_nodups_sorted.bam
+
+
+####### bam_nodup_sort -> pileup
+samtools mpileup -A -f ${ref_seq} ${outdir}/${sample}/refbased/${sample}_nodups_sorted.bam >  ${outdir}/${sample}/refbased/${sample}.pileup
+
+
+
+
+
+
+
+#---------------------------- pileup -> consensus + variant outputs
+# generate consensus sequence
+python3 /SAN/breuerlab/pathseq1/Cristina_home/viral_denovo_pipeline/exec/QUASR/extras/pileup_consensus.py -f ${outdir}/${sample}/refbased/${sample}.pileup -r ${ref_seq} -a 0.5 -o ${outdir}/${sample}/refbased/${sample} -d
+
+# append final consensus to outfile
+cat ${outdir}/${sample}/refbased/${sample}.consensus.fasta >> ${outdir}/all_refbased.fasta
+
+### end of script messages
+echo "********************************* SCRIPT COMPLETED *********************************"
+echo date
+qstat -j $JOB_ID
+
+ " > ${outdir}/$sample/cluster/${sample}_bbmap.sh
+
+     qsub ${outdir}/$sample/cluster/${sample}_bbmap.sh
+
+done
