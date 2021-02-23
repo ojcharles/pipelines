@@ -15,7 +15,6 @@ sra_list=${outdir}/sra_list3.tab # file with per line accession numbers
 #sratoolkit=/SAN/breuerlab/pathseq1/oc/tools/sratoolkit.2.10.9-ubuntu64
 sratoolkit=/usr/local/ncbi/sra-tools
 in_qual=20 # quality cutoff
-in_cores=20
 ###
 
 
@@ -69,7 +68,7 @@ for sample in `cat $sra_list`; do
     then
         echo "Split read files"
         #---------------------------- QC
-        trim_galore -q 20 -j $in_cores --paired ${outdir}/${sample}/${sample}*_1.fastq ${outdir}/${sample}/${sample}*_2.fastq  -o ${outdir}/${sample}/QC
+        trim_galore -q 20 -j 20 --paired ${outdir}/${sample}/${sample}*_1.fastq ${outdir}/${sample}/${sample}*_2.fastq  -o ${outdir}/${sample}/QC
         qc_file1=`find ${outdir}/${sample}/QC/${sample}_1*.fq`
         qc_file2=`find ${outdir}/${sample}/QC/${sample}_2*.fq`
 
@@ -80,7 +79,7 @@ for sample in `cat $sra_list`; do
     else
         echo "single read file"
         #---------------------------- QC
-        trim_galore -q 20 -j $in_cores ${outdir}/${sample}/${sample}*_1.fastq -o ${outdir}/${sample}/QC
+        trim_galore -q 20 -j 20 ${outdir}/${sample}/${sample}*_1.fastq -o ${outdir}/${sample}/QC
         qc_file1=`find ${outdir}/${sample}/QC/${sample}_1*.fq`
 
         #---------------------------- mapping
@@ -126,6 +125,9 @@ for sample in `cat $sra_list`; do
     ### all positions with variants
     varscan mpileup2cns ${outdir}/${sample}/refbased/${sample}.pileup --min-reads2 1 --min-avg-qual 10 --min-var-freq 0.01  --p-value 0.5  --output-vcf 1 > ${outdir}/${sample}/refbased/${sample}_allpos_variants.vcf
 
+
+    cd ${outdir} # raedy for next iter
+
     ### end of script messages
     echo "********************************* ${sample} COMPLETED *********************************"
     echo date
@@ -142,5 +144,5 @@ for sample in `cat $sra_list`; do
     #keep   ${sample}_nodups_sorted.bam
 
 
-    cd ${outdir} # raedy for next iter
+    
 done
