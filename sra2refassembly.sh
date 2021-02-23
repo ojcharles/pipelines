@@ -15,6 +15,7 @@ sra_list=${outdir}/sra_list3.tab # file with per line accession numbers
 #sratoolkit=/SAN/breuerlab/pathseq1/oc/tools/sratoolkit.2.10.9-ubuntu64
 sratoolkit=/usr/local/ncbi/sra-tools
 in_qual=20 # quality cutoff
+in_cores=20
 ###
 
 
@@ -68,7 +69,7 @@ for sample in `cat $sra_list`; do
     then
         echo "Split read files"
         #---------------------------- QC
-        trim_galore -q 20 --paired ${outdir}/${sample}/${sample}*_1.fastq ${outdir}/${sample}/${sample}*_2.fastq  -o ${outdir}/${sample}/QC
+        trim_galore -q 20 -j $in_cores --paired ${outdir}/${sample}/${sample}*_1.fastq ${outdir}/${sample}/${sample}*_2.fastq  -o ${outdir}/${sample}/QC
         qc_file1=`find ${outdir}/${sample}/QC/${sample}_1*.fq`
         qc_file2=`find ${outdir}/${sample}/QC/${sample}_2*.fq`
 
@@ -79,7 +80,7 @@ for sample in `cat $sra_list`; do
     else
         echo "single read file"
         #---------------------------- QC
-        trim_galore -q 20 ${outdir}/${sample}/${sample}*_1.fastq -o ${outdir}/${sample}/QC
+        trim_galore -q 20 -j $in_cores ${outdir}/${sample}/${sample}*_1.fastq -o ${outdir}/${sample}/QC
         qc_file1=`find ${outdir}/${sample}/QC/${sample}_1*.fq`
 
         #---------------------------- mapping
